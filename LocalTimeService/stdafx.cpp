@@ -9,6 +9,64 @@
 
 const unsigned int JAN_1970 = 0X83AA7E80; //=2208988800(1970/1/1 - 1900/1/1 in seconds)*/
 
+struct _tagGlobalTickCount_t
+{
+	//API ULONGLONG WINAPI GetTickCount64(void);
+	typedef ULONGLONG(WINAPI *GETTICKCOUNT64)(void);
+	GETTICKCOUNT64 pGetTickCount64;
+
+	//HIGH-RESOLUTION PERFORMANCE COUNTER
+	BOOL bMMTimeValid;
+	LARGE_INTEGER m_Start, m_Freq;
+
+	_tagGlobalTickCount_t()
+	{
+		pGetTickCount64 = NULL;
+		bMMTimeValid = FALSE;
+		memset(&m_Start, 0, sizeof(m_Start));
+		memset(&m_Freq, 0, sizeof(m_Freq));
+
+		if (pGetTickCount64 = (GETTICKCOUNT64)GetProcAddress(GetModuleHandle("Kernel32.dll"), "GetTickCount64")) //API valid
+		{
+			printf("GetTickCount64 API Valid\r\n");
+		}
+		else if (QueryPerformanceCounter(&m_Start) && QueryPerformanceFrequency(&m_Freq)) //high-resolution count valid
+		{
+			bMMTimeValid = TRUE;
+			printf("high-resolution count valid\r\n");
+		}
+		else //use default time
+		{
+			printf("just GetTickCount() support only\r\n");
+		}
+	}
+
+	ULONGLONG GetTickCount64(void)
+	{
+		if (pGetTickCount64) //api
+		{
+			return pGetTickCount64();
+		}
+		else if (bMMTimeValid) //high-resolution count
+		{
+			LARGE_INTEGER m_End = { 0 };
+			QueryPerformanceCounter(&m_End);
+			return (ULONGLONG)((m_End.QuadPart - m_Start.QuadPart) / (m_Freq.QuadPart / 1000));
+		}
+		else //normal
+		{
+			return GetTickCount();
+		}
+	}
+}GlobalTickCount;
+#define _GetTickCount64()(GlobalTickCount.GetTickCount64())
+
+// 获取开机时长
+long GetTickLongCount()
+{
+	return (long)(_GetTickCount64() / 1000);
+}
+
 // Service initialization
 int InitService()
 {
@@ -56,19 +114,19 @@ int SetSysCurrentTime(time_t rawtime)
 	systm.wMilliseconds = 0;
 
 	// NTP时间
-	char ntpStr[20];
+	char ntpStr[20] = "";
 	strftime(ntpStr, sizeof(ntpStr), "%Y-%m-%d %H:%M:%S", info);
 
 	// 本地时间
 	time_t curTime = time(NULL);
 	struct tm *curInfo = localtime(&curTime);
-	char curStr[20];
+	char curStr[20] = "";
 	strftime(curStr, sizeof(curStr), "%Y-%m-%d %H:%M:%S", curInfo);
 
 	// 更新本地时间
 	int result = (int)SetLocalTime(&systm);
 
-	char str[100];
+	char str[100] = "";
 	sprintf(str, "CurTime=%s,NtpTime=%s,Result=%d", curStr, ntpStr, result);
 	WriteToLog(str);
 
@@ -196,25 +254,25 @@ int CleanSocket(SOCKET socket, int errorNo, char *msg)
 int adjustTime(char *ntpServer, int ntpPort)
 {
 	int errorNo = 0;
-	char *errorMsg = NULL;
+	char errorMsg[100] = "";
 	//校验数据结构长度
 	_ASSERTE(sizeof(ntp_header) == 16);
 	_ASSERTE(sizeof(ntp_packet) == 48);
 	if (sizeof(ntp_packet) != 48) {
-		return CleanSocket(NULL, -1, "Socket Init Fail\n");
+		return CleanSocket(NULL, -1, "Socket Init Fail.");
 	}
 
 	// Initialize Winsock.
 	WSADATA wsaData;
 	int iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
 	if (iResult != NO_ERROR) {
-		return CleanSocket(NULL, -2, "Error at WSAStartup()\n");
+		return CleanSocket(NULL, -2, "Error at WSAStartup().");
 	}
 
 	// Create a socket.
 	SOCKET m_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 	if (m_socket == INVALID_SOCKET) {
-		sprintf(errorMsg, "Error at socket(): %ld\n", WSAGetLastError());
+		sprintf(errorMsg, "Error at socket(): %ld.", WSAGetLastError());
 		return CleanSocket(m_socket, -3, errorMsg);
 	}
 
@@ -226,7 +284,7 @@ int adjustTime(char *ntpServer, int ntpPort)
 	addr_src.sin_addr.s_addr = htonl(INADDR_ANY);
 	addr_src.sin_port = htons(0);
 	if (SOCKET_ERROR == bind(m_socket, (struct sockaddr*)&addr_src, addr_len)) {
-		sprintf(errorMsg, "Error at bind(): %ld\n", WSAGetLastError());
+		sprintf(errorMsg, "Error at bind(): %ld.", WSAGetLastError());
 		return CleanSocket(m_socket, -4, errorMsg);
 	}
 
@@ -235,12 +293,12 @@ int adjustTime(char *ntpServer, int ntpPort)
 	tv.tv_sec = 2;
 	tv.tv_usec = 0;
 	if (SOCKET_ERROR == setsockopt(m_socket, SOL_SOCKET, SO_SNDTIMEO, (char*)&tv, sizeof(tv))) {
-	printf("Error at bind(): %ld\n", WSAGetLastError());
+	printf("Error at bind(): %ld.", WSAGetLastError());
 	errorNo = -4;
 	goto Cleanup;
 	}
 	if (SOCKET_ERROR == setsockopt(m_socket, SOL_SOCKET, SO_RCVTIMEO, (char*)&tv, sizeof(tv))) {
-	printf("Error at bind(): %ld\n", WSAGetLastError());
+	printf("Error at bind(): %ld.", WSAGetLastError());
 	errorNo = -4;
 	goto Cleanup;
 	}
@@ -253,7 +311,8 @@ int adjustTime(char *ntpServer, int ntpPort)
 	{
 		struct hostent* host = gethostbyname(ntpServer);
 		if (NULL == host || 4 != host->h_length) {
-			return CleanSocket(m_socket, -5, "Error at gethostbyname()\n");
+			sprintf(errorMsg, "Error at gethostbyname(%s).", ntpServer);
+			return CleanSocket(m_socket, -5, errorMsg);
 		}
 		memcpy(&(addr_dst.sin_addr.s_addr), host->h_addr_list[0], 4);
 	}
@@ -263,7 +322,7 @@ int adjustTime(char *ntpServer, int ntpPort)
 	u_long ul = 1;
 	//设置为非阻塞连接
 	if (SOCKET_ERROR == ioctlsocket(m_socket, FIONBIO, &ul)) {
-	printf("Error at ioctlsocket(): %ld\n", WSAGetLastError());
+	printf("Error at ioctlsocket(): %ld.", WSAGetLastError());
 	errorNo = -6;
 	goto Cleanup;
 	}
@@ -277,7 +336,7 @@ int adjustTime(char *ntpServer, int ntpPort)
 	timeout.tv_sec = 2;
 	timeout.tv_usec = 0;
 	if (SOCKET_ERROR == select(0, &fds_read, NULL, NULL, &timeout)) {
-		sprintf(errorMsg, "Error at select(): %ld\n", WSAGetLastError());
+		sprintf(errorMsg, "Error at select(): %ld.", WSAGetLastError());
 		return CleanSocket(m_socket, -6, errorMsg);
 	}
 
@@ -285,27 +344,43 @@ int adjustTime(char *ntpServer, int ntpPort)
 	ul = 0;
 	//设置为阻塞连接
 	if (SOCKET_ERROR == ioctlsocket(m_socket, FIONBIO, &ul)) {
-	printf("Error at ioctlsocket(): %ld\n", WSAGetLastError());
+	printf("Error at ioctlsocket(): %ld.", WSAGetLastError());
 	errorNo = -6;
 	goto Cleanup;
 	}
 	*/
 
 	if (send_ntp_packet(m_socket, (sockaddr*)&addr_dst) == false) {
-		sprintf(errorMsg, "Error at send(): %ld\n", WSAGetLastError());
+		sprintf(errorMsg, "Error at send(): %ld.", WSAGetLastError());
 		return CleanSocket(m_socket, -7, errorMsg);
 	}
 
 	ntp_packet packet;
 	if (recv_ntp_packet(m_socket, packet) == false) {
-		sprintf(errorMsg, "Error at recvfrom(): %ld\n", WSAGetLastError());
+		sprintf(errorMsg, "Error at recvfrom(): %ld.", WSAGetLastError());
 		return CleanSocket(m_socket, -8, errorMsg);
 	}
 
 	if (set_local_time(packet) == 0) {
-		return CleanSocket(m_socket, -9, "Error at set_local_time\n");
+		return CleanSocket(m_socket, -9, "Error at set_local_time.");
 	}
 
 	return CleanSocket(m_socket, 1, NULL);
+}
+
+int strInArray(char *str, char *delims, char *needle)
+{
+	char *result = NULL;
+	char tmp[30] = "";
+	strcpy(tmp, str);
+	printf("%s \n", tmp);
+	result = strtok(tmp, delims);
+	while (result != NULL) {
+		if (0 == strcmp(result, needle)) {
+			return 1;
+		}
+		result = strtok(NULL, delims);
+	}
+	return 0;
 }
 

@@ -28,11 +28,13 @@ int  InitService();
 int  InitFile();
 long GetTickLongCount();
 int  GetInIStruct(FILE *fp);
-int  WriteLocalTime();
+int	 WriteLocalTime(int status);
 int  WriteToLog(char* str);
 void runService();
 void installService();
 void startService();
 void uninstallService();
 int  adjustTime(char *ntpServer, int ntpPort);
+int  strInArray(char *str, char *delims, char *needle);
+int  StartNtp();
 
